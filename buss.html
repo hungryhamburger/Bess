@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Buss nær meg</title>
+<style>
+body { font-family: Arial; padding: 20px; background:#f0f0f0; }
+h2 { margin-bottom: 10px; }
+li { margin-bottom: 8px; font-size: 18px; }
+</style>
+</head>
+<body>
+
+<h2 id="stop">Laster...</h2>
+<ul id="list"></ul>
+
+<script>
+async function hentData(lat, lon) {
+
+  const query = `
+  {
+    nearest: nearest(
+      latitude: ${lat}
+      longitude: ${lon}
+      maximumDistance: 1000
+      filterByPlaceTypes: stopPlace
+    ) {
+      edges {
+        node {
+          place {
+            ... on StopPlace {
+              id
+              name
+            }
+          }
+        }
+      }
+    }
+  }
+  `;
+
+  const response = await fetch("https://api.entur.io/journey-planner/v3/graphql", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "ET-Client-Name": "min-buss-app"
+    },
+    body: JSON.stringify({ query })
+  });
+
+  const data = await response.json();
+  const stop = data.data.nearest.edges[0].node.place;
+
+  document.getElementById("stop").innerText = stop.name;
+
+  hentAvganger(stop.id);
+}
+
+async function hentAvganger(stopId) {
+
+  const query = `
+  {
+    stopPlace(id: "${stopId}") {
+      name
+      estimatedCalls(numberOfDepartures: 5) {
+        destinationDisplay { frontText }
+        expectedDepartureTime
+        serviceJourney {
+          line { publicCode }
+          transportMode
+        }
+      }
+    }
+  }
+  `;
+
+  const response = await fetch("https://api.entur.io/journey-planner/v3/graphql", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "ET-Client-Name": "min-buss-app"
+    },
+    body: JSON.stringify({ query })
+  });
+
+  const data = await response.json();
+  const calls = data.data.stopPlace.estimatedCalls;
+
+  const list = document.getElementById("list");
+  list.innerHTML = "";
+
+  const now = new Date();
+
+  function tilNorskTid(utcTid) {
+    return new Date(new Date(utcTid).toLocaleString("en-US", { timeZone: "Europe/Oslo" }));
+  }
+
+  function formaterKlokke(date) {
+    let h = date.getHours();
+    let m = date.getMinutes();
+    if(m < 10) m = "0" + m;
+    return h + ":" + m;
+  }
+
+  calls
+    .filter(c => c.serviceJourney.transportMode === "bus")
+    .forEach(call => {
+      const departure = tilNorskTid(call.expectedDepartureTime);
+      const diffMin = Math.round((departure - now)/60000);
+
+      const li = document.createElement("li");
+      li.innerText = call.serviceJourney.line.publicCode + " – " +
+                     call.destinationDisplay.frontText + " – " +
+                     (diffMin >= 15 ? formaterKlokke(departure) : diffMin + " min");
+      list.appendChild(li);
+    });
+}
+
+// Hent posisjon og start oppdatering
+navigator.geolocation.getCurrentPosition(pos => {
+  hentData(pos.coords.latitude, pos.coords.longitude);
+  setInterval(() => {
+    hentData(pos.coords.latitude, pos.coords.longitude);
+  }, 30000);
+});
+</script>
+
+</body>
+</html>
